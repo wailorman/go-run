@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -45,6 +46,50 @@ func (i *Command) StreamOutput() (done chan struct{}, stdout chan string, stderr
 // SetTimeout _
 func (i *Command) SetTimeout(timeout time.Duration) {
 	i.timeout = &timeout
+}
+
+// Wait _
+func (i *Command) Wait() error {
+	return i.wait(true, false)
+}
+
+// wait _
+func (i *Command) wait(collectFailures, collectStderr bool) error {
+	errs := make([]error, 0)
+
+	if collectFailures {
+		go func() {
+			for err := range i.failures {
+				errs = append(errs, err)
+			}
+		}()
+	}
+
+	if collectStderr {
+		go func() {
+			for err := range i.stderr {
+				errs = append(errs, errors.New(err))
+			}
+		}()
+	}
+
+	<-i.done
+
+	if len(errs) == 1 {
+		return errs[0]
+	}
+
+	if len(errs) > 1 {
+		errorsMessages := make([]string, 0)
+
+		for _, err := range errs {
+			errorsMessages = append(errorsMessages, err.Error())
+		}
+
+		return errors.New(strings.Join(errorsMessages, "; "))
+	}
+
+	return nil
 }
 
 // Run _
