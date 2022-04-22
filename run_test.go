@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func Test__Streamed(t *testing.T) {
 	runner := New(command)
 
 	// done, stdout, stderr, failures := runner.Run()
-	err := runner.Run()
+	err := runner.Run(context.Background())
 
 	assert.Nil(err, "Runner initialization error")
 

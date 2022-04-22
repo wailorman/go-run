@@ -2,22 +2,24 @@ package run
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"os/exec"
+	"time"
 
 	"github.com/pkg/errors"
 )
 
-// Instance _
-type Instance struct {
+// Command _
+type Command struct {
 	command        []string
 	alreadyStarted bool
+
+	timeout *time.Duration
 
 	stdOutPipe io.ReadCloser
 	stdErrPipe io.ReadCloser
 	stdInPipe  io.WriteCloser
-
-	cancel chan struct{}
 
 	done     chan struct{}
 	stdout   chan string
@@ -26,8 +28,8 @@ type Instance struct {
 }
 
 // New _
-func New(command []string) *Instance {
-	return &Instance{
+func New(command []string) *Command {
+	return &Command{
 		command: command,
 	}
 }
@@ -35,18 +37,18 @@ func New(command []string) *Instance {
 // ErrDirty _
 var ErrDirty = errors.New("Runner was already started")
 
-// Cancel _
-func (i *Instance) Cancel() {
-	close(i.cancel)
-}
-
 // StreamOutput _
-func (i *Instance) StreamOutput() (done chan struct{}, stdout chan string, stderr chan string, failures chan error) {
+func (i *Command) StreamOutput() (done chan struct{}, stdout chan string, stderr chan string, failures chan error) {
 	return i.done, i.stdout, i.stderr, i.failures
 }
 
+// SetTimeout _
+func (i *Command) SetTimeout(timeout time.Duration) {
+	i.timeout = &timeout
+}
+
 // Run _
-func (i *Instance) Run() (err error) {
+func (i *Command) Run(ctx context.Context) (err error) {
 
 	if i.alreadyStarted {
 		return ErrDirty
@@ -61,63 +63,54 @@ func (i *Instance) Run() (err error) {
 
 	go func() {
 		var err error
+		var cmdContext context.Context
+		var kill context.CancelFunc
 
-		proc := exec.Command(i.command[0], i.command[1:len(i.command)]...)
+		if i.timeout != nil {
+			cmdContext, kill = context.WithTimeout(ctx, *i.timeout)
+		} else {
+			cmdContext, kill = context.WithCancel(ctx)
+		}
+
+		fail := buildFailFunc(kill, i.failures)
+
+		proc := exec.CommandContext(cmdContext, i.command[0], i.command[1:len(i.command)]...)
 
 		i.stdOutPipe, err = proc.StdoutPipe()
 
 		if err != nil {
-			i.failures <- errors.Wrap(err, "Failed to get stderr")
-			close(i.done)
+			fail(err, "Failed to get stderr")
 			return
 		}
 
 		i.stdErrPipe, err = proc.StderrPipe()
 
 		if err != nil {
-			i.failures <- errors.Wrap(err, "Failed to get stderr")
-			close(i.done)
+			fail(err, "Failed to get stderr")
 			return
 		}
 
 		i.stdInPipe, err = proc.StdinPipe()
 
 		if err != nil {
-			i.failures <- errors.Wrap(err, "Stdin not available")
-			close(i.done)
+			fail(err, "Stdin not available")
 			return
 		}
 
 		err = proc.Start()
 
 		if err != nil {
-			i.failures <- errors.Wrap(err, "Failed to run command")
-			close(i.done)
+			fail(err, "Failed to run command")
 			return
 		}
-
-		go cancelListener(i.cancel, i.stdInPipe)
-		go waitForFinish(proc, i.failures, i.done)
 
 		go scanLines(i.stdOutPipe, i.stdout)
 		go scanLines(i.stdErrPipe, i.stderr)
+
+		waitForFinish(proc, i.failures, i.done)
 	}()
 
 	return nil
-}
-
-func cancelListener(cancel chan struct{}, stdInPipe io.WriteCloser) {
-	if cancel == nil {
-		return
-	}
-
-	for {
-		select {
-		case <-cancel:
-			stdInPipe.Write([]byte("q\n"))
-			return
-		}
-	}
 }
 
 // Waiter _
@@ -151,5 +144,14 @@ func scanLines(pipe io.ReadCloser, out chan string) {
 			pipe.Close()
 			return
 		}
+	}
+}
+
+func buildFailFunc(kill func(), failures chan error) func(err error, description string) error {
+	return func(err error, description string) error {
+		failure := errors.Wrap(err, description)
+		failures <- failure
+		kill()
+		return failure
 	}
 }
