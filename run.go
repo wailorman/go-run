@@ -205,8 +205,3 @@ func buildFailFunc(kill func(), failures chan error) func(err error, description
 		return failure
 	}
 }
-
-// Quote _
-func Quote(str string) string {
-	return "\"" + str + "\""
-}
