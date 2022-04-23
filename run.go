@@ -153,6 +153,10 @@ func (i *Command) Run(ctx context.Context) (err error) {
 		go scanLines(i.stdErrPipe, i.stderr)
 
 		waitForFinish(proc, i.failures, i.done)
+
+		close(i.stdout)
+		close(i.stderr)
+		close(i.failures)
 	}()
 
 	return nil
