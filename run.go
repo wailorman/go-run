@@ -187,12 +187,13 @@ func scanLines(pipe io.ReadCloser, out chan string) {
 
 	for {
 		line, err := reader.ReadString('\n')
-		out <- line
 
 		if err != nil {
 			pipe.Close()
 			return
 		}
+
+		out <- line
 	}
 }
 
