@@ -154,8 +154,6 @@ func (i *Command) Run(ctx context.Context) (err error) {
 
 		waitForFinish(proc, i.failures, i.done)
 
-		close(i.stdout)
-		close(i.stderr)
 		close(i.failures)
 	}()
 
@@ -183,6 +181,7 @@ func waitForFinish(proc Waiter, failures chan error, done chan struct{}) {
 }
 
 func scanLines(pipe io.ReadCloser, out chan string) {
+	defer close(out)
 	reader := bufio.NewReader(pipe)
 
 	for {
